@@ -1,5 +1,6 @@
 // Strict ES5 - node v0.12.2 on webOS 4 (LG OLED B8) has no ES6 support.
 var fs = require('fs');
+var path = require('path');
 var toInt = require('./util').toInt;
 var allocBuffer = require('./util').allocBuffer;
 var monotonicMs = require('./util').monotonicMs;
@@ -111,10 +112,41 @@ var fromHbcFn = null;
 var inputMap = null;
 var browserAppId = null;
 var toastSourceId = null;
+// Icons for notify: <name>.png here, beside config.json, so updates keep them.
+var toastIconDir = path.join(__dirname, '..', 'toast-icons');
 var tileHidingOffMsg = null;
 var writeSettingsFn = null;
 
 var rcuDevicePath = null;
+// LG's toast types (SystemUI/Notification/Toast.qml): standard is the plain
+// toast at the bottom and has no icon slot; advanced is the same toast with a
+// 66 icon; light is the small one at the top right with a 36 icon.
+var TOAST_TYPES = ['standard', 'advanced', 'light'];
+
+/*
+ * A toast's luna payload. A string is the message of a standard toast. An
+ * object { type, text } is a notification, whose text may open with an icon:
+ * ":washer:" names a PNG in toastIconDir, ":@/usr/palm/.../icon.png:" is any
+ * image on the TV. The compositor only loads icons from local files, and LG's
+ * own toasts pass absolute paths too.
+ */
+function toastParams(value) {
+  var note = value && typeof value === 'object' ? value : { text: value };
+  var text = String(note.text || '');
+  var params = { sourceId: toastSourceId };
+  var iconMatch = typeof value === 'object' ? /^:(@\/[^:]+|[a-z0-9_-]+):\s*/i.exec(text) : null;
+  if (iconMatch) {
+    text = text.substring(iconMatch[0].length);
+    var iconPath = iconMatch[1].charAt(0) === '@' ? iconMatch[1].substring(1)
+      : path.join(toastIconDir, iconMatch[1] + '.png');
+    if (fs.existsSync(iconPath)) params.iconUrl = iconPath;
+    else console.error('toast: no icon at ' + iconPath);
+  }
+  if (note.type && note.type !== 'standard') params.type = note.type;
+  params.message = (text || 'hello').slice(0, 120);
+  return params;
+}
+
 function getRcuDevicePath() {
   if (rcuDevicePath) return rcuDevicePath;
   try {
@@ -825,8 +857,10 @@ function doControl(action, value, cb) {
     case 'toast':
       /* Both the payload's sourceId and luna-send's -a have to name an app the
          bus already knows; "tvweb" is rejected as an Unknown Source. */
-      return luna('com.webos.notification/createToast',
-                  { sourceId: toastSourceId, message: String(value || 'hello').slice(0, 120) },
+      if (value && typeof value === 'object' && TOAST_TYPES.indexOf(value.type) === -1) {
+        return cb({ ok: false, error: 'toast type must be one of ' + TOAST_TYPES.join(', ') });
+      }
+      return luna('com.webos.notification/createToast', toastParams(value),
                   function (r) { cb({ ok: !!(r && r.returnValue), error: r && r.errorText }); },
                   toastSourceId);
 
@@ -1157,6 +1191,7 @@ function init(opts) {
   if (opts.inputs) inputMap = opts.inputs;
   if (opts.browserApp) browserAppId = opts.browserApp;
   if (opts.toastSource) toastSourceId = opts.toastSource;
+  if (opts.toastIconDir) toastIconDir = opts.toastIconDir;
   if (opts.tileHidingOff) tileHidingOffMsg = opts.tileHidingOff;
 
   return {
