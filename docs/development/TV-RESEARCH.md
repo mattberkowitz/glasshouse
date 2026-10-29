@@ -4,6 +4,30 @@ Findings about how LG's webOS works, kept so the same ground is not covered
 twice. Each entry names the TV and webOS version it was found on. For how
 Glasshouse itself works, see [IMPLEMENTATION.md](../IMPLEMENTATION.md).
 
+## C9 HAWK2 audio EDID (webOS 4.10.2)
+
+OLED65C9PUA, firmware 05.50.00, reported in #1078 on 28 October 2026.
+
+- The C9 reports `tv.model.hdmiSwitchType: HAWK2` and `tv.model.edidType:
+  TrueHD`. Source-facing EDIDs are returned by
+  `com.webos.service.tv.systemproperty/getEdidData` with `inputType: 0` and
+  logical `portNumber: 1..4`. On the measured mapping, HDMI 1 is receiver 3.
+  The lower HDMI20 driver buffer does not hold this switch's source EDID.
+- Its sound-settings response names the selected input in `dimension.input`
+  (`hdmi1`), not `dimension.audioInput`. Its legacy audio and ARC queries can
+  be unavailable. The `TrueHD` family name does not mean no DTS: the
+  checksummed native EDID includes core DTS (`3d1ec0`) and DTS-HD (`5f7e01`).
+- Receiver 3's status file gives the source's Audio InfoFrame channel count,
+  allocation and sample frequency. Zero means unspecified, not stereo or
+  48 kHz. The fields can remain through a pause, so they are source metadata,
+  not proof of playback.
+- The media-resource file declares DTS, DTSH and DTSE with six-channel limits,
+  which does not show DTS-HD Master Audio decoding or DTS:X rendering.
+- A Panasonic UB820 on HDMI 1 decoded DTS-HD Master Audio 5.1 to stereo PCM
+  for a Sonos on eARC. With HDMI 1's EDID changed to declare six-channel PCM
+  and a 5.1 speaker allocation, it sent PCM 5.1 instead. Writing the EDID is
+  elforeign's separate helper, not part of Glasshouse.
+
 ## Audio declarations and the negotiated link (G3, webOS 9.2.2)
 
 OLED55G36LA, firmware 23.25.55, kernel `5.4.268-320`, read on 25 October 2026:
@@ -29,6 +53,29 @@ not a live PCM signal. Native sound-output and Pass Through controls were
 exercised and their original settings restored. The PCM-only receiver did
 not provide a DTS reception test.
 
+## A stale whole-category sound read (G5, webOS 10.3.1)
+
+Reported in #1007 from an OLED83G54LW, firmware 33.31.68. `getSystemSettings`
+for the whole `sound` category returned `soundOutputDigital: auto`, while a
+query naming `soundOutputDigital` returned `passThrough`, as LG's menu showed.
+Both answers were successful, and repeated with no setting written between
+them. webOS 4.4 answers nothing to a named query that includes a key it lacks
+(#954), so only keys the whole read returned are named.
+
+## Homebrew Channel screen saver apps
+
+Read from their sources on 28 October 2026 (#1067). Custom Screensaver
+(webosbrew), Aerial Screensaver (aabytt), Aerial webOS screensaver (rchalaaa)
+and Idlegif each ship one QML file and bind-mount it over
+`/usr/palm/applications/com.webos.app.screensaver/qml/main.qml`, from their
+app or an `init.d` hook. On webOS 10.3.2 that file does not exist, as LG's
+screen saver is Flutter, so Custom Screensaver's script stops with "Target file
+does not exist". Each QML loads everything else by its full path: its app
+folder under `/media/developer/apps`, or `/var/lib/webosbrew/idlegif` for
+Idlegif's GIFs. Custom Screensaver's DVD logo is inside the QML. They use
+QtQuick 2.4, with QtMultimedia, `WebOSServices` and `iLib` for the Aerial
+ones. aabytt's also takes over `com.webos.app.videoads` on webOS 11.
+
 ## HDMI CEC devices (G3, webOS 9.2.2)
 
 `com.webos.service.eim/getAllInputStatus` returns CEC devices in each HDMI
@@ -52,6 +99,12 @@ them to `ExternalDeviceControlInterfaces/SimplinkController.qml`, which calls
 controller uses the input's `lastUniqueId`, or its first SIMPLINK device.
 On HDMI 2 with no remembered source, this selected the STEREO 70s receiver
 (ID 5), leaving the PS5 (ID 8, physical address 2.4.0.0) asleep.
+
+`lastUniqueId` follows each selection at once: on 27 October 2026, launching
+HDMI 2 with the PS5's ID set it to 8, with the receiver's ID to 5, and a
+later plain HDMI 2 launch left it at 5. It is the TV's own record of which
+device on a port was last chosen. Whether the PS5 waking itself (One Touch
+Play) updates it was not tested.
 
 On 20 October 2026, with the PS5 confirmed in rest mode, switching through
 HDMI 4 and Home then launching HDMI 2 with its device ID woke it. CEC history
@@ -380,6 +433,24 @@ Measured on 22 October 2026 on an LCD 65UQ801C0SB, firmware 04.60.90.
   in front about 6 s later, against 2 to 3 s on a G3; the screen is black
   meanwhile.
 
+## Glasshouse Home on webOS 6.4.0 (OLED55C14LB, firmware 03.41.00)
+
+Reported on PR #910 on 27 October 2026.
+
+- **No `defaultApps` at all.** `getSystemSettings` in `general` for
+  `defaultApps` answers `returnValue: false` with `errorText: "There is no
+  matched result from DB"`, and neither `settings` nor `errorKey`, where 6.5.3
+  gives a partial answer.
+- **The last input comes back after sam restarts.** With Home held, the
+  release's sam restart gave LG's Home its place and it opened, and about 3 s
+  later the last-input handler put HDMI 3 back over it, as on webOS 5.
+- **An app brought back from Recent apps does not move sam's foreground.**
+  House, already running, came to the front with no launch, and sam kept naming
+  `com.webos.app.home` in front for the 20 s until the view was taken for hung.
+  Apps opened from the view's rows did move it.
+- **Exiting an app lands on the last input**, from LG's Exit dialog or Back on
+  LG's Apps, not on Home.
+
 ## LG Home's recent apps (G3, webOS 9.2.2)
 
 Read on 19 October 2026 from LG's Home's QML under the Glasshouse Home
@@ -536,6 +607,17 @@ Measured on 18 October 2026 by launching apps over SSH and logging
   is the one the remote's keys reach.
 - All three accept `subscribe: true`. SurfaceManager's replies are formatted
   JSON over several lines even without luna-send's `-f`.
+- LG's on-screen keyboard is the MaliitServer surface
+  `_WEBOS_WINDOW_TYPE_KEYBOARD`. `getForegroundWindowInfo` lists it while it
+  is open, but it never takes focus, so `getFocusedWindowInfo` keeps naming
+  the app typed into. With it up, keys sent through
+  `networkinput/test/sendKeyCode` did not move it; the remote's own input
+  device does.
+- `com.webos.service.ime` has four methods: `registerRemoteKeyboard`
+  (subscribe only; `currentWidget.focus` and the field's content type),
+  `insertText` (`text`, optional `replace` and `replaceLength`),
+  `deleteCharacters` (`count`, optional `mode` `backspace` or `direct`) and
+  `sendEnterKey`. None checks that the caller registered as a remote keyboard.
 
 ## Disconnected input devices (webOS 6.4.0, C1)
 
@@ -900,12 +982,9 @@ app in front. Remote Keys puts its own filter first.
   assistant's app on a press, while the microphone button
   (`Key_webOS_Voice`, RF 436) goes to voice control. The same file names about
   20 regional streaming buttons (Hotstar, Stan, Wavve, U-Next, TVer and others).
-- **The voice assistants' buttons are ordinary hotkeys.** On a C2 (webOS 9.2.2)
-  `appLaunch.js` handles `Key_webOS_ALEXA` (IR 1094) and
-  `Key_webOS_GoogleVoice` (IR 1125) like the streaming buttons, launching the
-  assistant's app on a press, while the microphone button
-  (`Key_webOS_Voice`, RF 436) goes to voice control. The same file names about
-  20 regional streaming buttons (Hotstar, Stan, Wavve, U-Next, TVer and others).
+  On a CX (webOS 5.5), the microphone button set to an app through the filter
+  opened it on a press and on a hold alike, and set back to LG's own it started
+  voice control again (#1034).
 - **Filters get the compositor's timers.** `StarfishKeyFilter.qml` hands every
   filter `genericTimer` (`set(ms, callback)`, `cancel`, `isRunning`), as LG's
   `appLaunch.js` uses it. On a change to the key it cancels every
@@ -924,6 +1003,29 @@ app in front. Remote Keys puts its own filter first.
   it has never heard of (`glasshouse.remoteKeys`) in
   `/mnt/lg/cmn_data/var/preferences/configd_factory_db.json`, kept across
   reboots. There is no delete method, and setting `null` is ignored.
+
+## The microphone and Google Assistant on the evdev device (C2, webOS 9.2.2)
+
+Read on 28 October 2026 for #1088, with an MR22 Magic Remote. Both buttons
+arrive on the remote's own input device (`LGE M-RCU - Builtin [0]`) as key
+codes 428 (the microphone) and 1117 (Google Assistant), LG's xkb codes 436 and
+1125 less 8, while `lginput2` logs `KEY_VOICE` and `KEY_GOOGLEVOICE`. A C9 on
+webOS 4.10.2 reports 428 for the microphone too. With either set in Remote keys,
+the compositor's filter keeps the press from LG and the device still delivers it.
+
+## LG's Home started again behind Glasshouse Home (G3, webOS 11.2.0)
+
+Reported in #1042 by BlueSink from an OLED77G3PUA, firmware 43.21.71. A minute
+or two after the takeover stopped LG's Home, with sam already reporting
+`com.webos.app.home` as `web` in the `home` category, new `flutter-client -i
+com.webos.app.home` processes appeared, launched by
+`com.webos.service.preloadmanager`. Home presses then logged five or six `SAM
+NL_APP_LAUNCH_BEGIN` for `com.webos.app.home` (caller
+`com.webos.starfish.keyfilters`) with no `LSM NL_VSC` after them, while launches
+by luna-send still drew the view. Stopping LG's Home every few seconds and
+`preloadmanager/setPreloadPolicy` with `{"application":{"id":"com.webos.app.home",
+"isEnabled":false}}`, sent again about once a minute, kept Home opening through
+reboots.
 
 ## Native key filters (C5, webOS 11.2.0)
 
@@ -1060,6 +1162,31 @@ and others' work on webOS 10
   (killing it) reads the new layout; no black picture was reported from it.
   Mounted from a webosbrew `init.d` hook, the home app was running with the
   changed layout about 29 s after power-on.
+
+## The apps' recommendations (50QNED87T6B, webOS 10.2.2)
+
+- **The cards come from the apps, not LG's servers.** Netflix, Prime Video,
+  Disney+, HBO Max and YouTube each give the application manager a list of
+  titles. `luna://com.webos.service.applicationmanager/getAllContents` with
+  `{}` answers with all of them, read on the TV: `allContents`, one entry per
+  launch point (`netflix_default`), each with `contents`. A `type: 'title'`
+  entry heads each list and is empty; the cards are `type: 'content'` with
+  `titleText`, `category` (Netflix: "Continue watching for …", "Top picks
+  for you today"), `image.url` (480 x 270, on the app's own servers) and
+  `onClick: { targetAppId, contentId, launchParam }`. 70 cards across the five
+  apps on this TV; the browser's list was empty.
+- **LG's Home reads them as its `NowStreamingProvider`.** `libapp.so` names
+  `applicationmanager/getAllContents` there, and `applicationManager/getContents`
+  (which refuses `{}` as invalid parameters). The `recommendedShelf` itself is
+  LG's: `[SDP Shelf Data]` and `[ContentMinorShelf]` ask
+  `com.webos.service.admanager/requestBannerInfoWithoutContextIndex` and
+  `com.webos.service.sdx`.
+- **A card opens through `contentTarget`.** `contentId` is the app's
+  `contentTarget` launch parameter, the convention `libapp.so` names beside
+  `targetAppId`. Each card also has an `onShow` (`{ method: 'invoke', service:
+  'amazon.service', contentId }`) that tells the app it was seen.
+- `com.webos.service.discovery/getRecommendationData` and
+  `com.webos.service.prs/listRecommendations` gave no answer within 10 s.
 
 ## What the player is doing (webOS 4.4.3, B8; webOS 9.2.2, C2)
 
@@ -1263,6 +1390,29 @@ The webOS 9 entries above describe the home app's CRIU checkpoint. On a CX:
   `sam-conf-tv.json` once about 5 s into boot, and `sam.service`'s
   `ExecStartPre` script kills every native app when sam is respawned, so the
   list cannot be changed without a mount and a sam restart at every boot.
+
+## Which app the Home key opens (webOS 5.6.2, CX)
+
+- `general.defaultApps.home` is `com.webos.app.fullhome`, LG's full-screen
+  Home, a separate native app (`appCategory: ["home"]`, window type `home`)
+  from `com.webos.app.home`. surfacemanager launches it for a Home press
+  (`NL_APP_LAUNCH_BEGIN`, caller `com.webos.surfacemanager`, then `NL_VSC` with
+  `_WEBOS_WINDOW_TYPE_HOME`). With Glasshouse Home in `com.webos.app.home`'s
+  place, the first press showed LG's Home and only the second the view.
+- Releasing the overlay to open `com.webos.app.home` again restarts sam, and
+  about 1 s after the launch `last_input_handler` (mode `last_input`)
+  launched the input, then eim again at 4.8 s; LG's Home was hidden under it
+  (the LG Home tile, 01:33 UTC), and the same when Home was held. Launching
+  `com.webos.app.fullhome` needs no release.
+- Home was the same web process (pid unchanged) across both presses and
+  `getForegroundAppInfo` kept naming the input, so a Home window is not
+  visible in the foreground app; `/var/log/messages` shows which one is.
+- Woken from Active Standby by the remote key, with Home opened 1.4 s in
+  (`com.webos.app.home`, caller `lunasend`), Home showed for about 2 s: eim
+  launched the input (`com.webos.app.hdmi2`) again 2.9 s after the wake, twice,
+  and it came back in front.
+- `homeAutoLaunch` and `checkHomeAutoLaunchValue` are in category `general`;
+  asked for under `option` they come back as `errorKey`.
 
 ## Home's launch events (webOS 5.6.2, CX)
 

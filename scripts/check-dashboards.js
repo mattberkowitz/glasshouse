@@ -902,6 +902,46 @@ async function visitHomeArrangement(browser, base, problems) {
 
 
 // Each row's Order, on Glasshouse Home's own view, the Home tab and the TV app's Home section.
+/*
+ * The Home tab's Recent apps: every app listed with its switch, and hiding one
+ * saves the list with it while its tile stays on the Apps row.
+ */
+async function visitHomeRecentsHidden(browser, base, problems) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on('pageerror', e => problems.push('Home Recents: ' + e.message));
+  const layout = { rows: ['app', 'dev', 'ch'], order: { app: [], dev: [], ch: [] },
+    sort: { app: 'custom', dev: 'custom', ch: 'custom' }, hidden: { app: [], dev: [], ch: [] }, folder: [], channels: [],
+    hintSeen: true, searchHintSeen: true, excludedRecents: [] };
+  const saves = [];
+  await page.route('**/api/home**', route => {
+    const url = new URL(route.request().url());
+    const catalogue = { ok: true, apps: [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }], devices: [], channels: [],
+      sources: { channels: 0 }, order: { app: ['one', 'two', 'lg-home'], dev: [], ch: [] }, layout };
+    let body = { ok: true };
+    if (url.pathname === '/api/home') body = Object.assign({ ok: true, available: true, supported: { ok: true }, enabled: true, active: true,
+      writable: true, layout, history: true }, url.searchParams.get('with') ? { catalogue, channels: [] } : {});
+    else if (url.pathname === '/api/home/catalogue') body = catalogue;
+    else if (url.pathname === '/api/home/layout') {
+      const patch = route.request().postDataJSON();
+      saves.push(patch);
+      if (patch.excludedRecents) layout.excludedRecents = patch.excludedRecents;
+      body = { ok: true, layout: JSON.parse(JSON.stringify(layout)) };
+    }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  try {
+    await page.goto(base + '/?tab=home');
+    await page.waitForFunction(() => document.querySelectorAll('#home-recents .prot-row').length === 2);
+    await page.evaluate(() => { document.querySelector('#home-recents details').open = true; });
+    await page.locator('#home-recents .prot-row').first().locator('button').click();
+    await page.waitForFunction(() => /1/.test((document.querySelector('#home-recents .home-row-move') || {}).textContent || ''));
+    if (JSON.stringify(saves) !== JSON.stringify([{ excludedRecents: ['one'] }])) problems.push('Home Recents: hiding One saved ' + JSON.stringify(saves));
+    if (layout.hidden.app.length) problems.push('Home Recents: hiding from Recents hid the tile too');
+  } catch (e) {
+    problems.push('Home Recents: ' + e.message);
+  } finally { await page.close(); }
+}
+
 async function visitHomeOrder(browser, base, problems) {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   page.on('pageerror', e => problems.push('Home order: ' + e.message));
@@ -1192,7 +1232,10 @@ async function visitHomeAvailability(browser, base, problems) {
   const cases = [
     { name: 'unavailable', st: { available: false, enabled: false }, glasshouse: false },
     { name: 'LG\'s Home only', st: { available: true, enabled: false, lgHomeAvailable: true, lgHome: lgHome(false), homeAutoLaunch: false }, glasshouse: false },
-    { name: 'Glasshouse Home on', st: { available: true, enabled: true, lgHomeAvailable: true, lgHome: lgHome(true) }, glasshouse: true }
+    { name: 'Glasshouse Home on', st: { available: true, enabled: true, lgHomeAvailable: true, lgHome: lgHome(true) }, glasshouse: true },
+    // webOS 5 and 6, where each switch restarts the app manager: their note shows there only.
+    { name: 'webOS 6', st: { available: true, enabled: true, lgHomeAvailable: true, lgHome: lgHome(true),
+      supported: { ok: true, experimental: true, restartsApps: true } }, glasshouse: true }
   ];
   for (const c of cases) {
     const st = c.st;
@@ -1215,6 +1258,10 @@ async function visitHomeAvailability(browser, base, problems) {
         continue;
       }
       if (await page.locator('#home-hero').isVisible() !== c.glasshouse) fail('Glasshouse Home\'s switch ' + (c.glasshouse ? 'missing' : 'shown'));
+      const restarts = !!(st.supported && st.supported.restartsApps);
+      if (c.glasshouse && await page.locator('#home-restart-note').isVisible() !== restarts) {
+        fail('the note that a switch closes apps ' + (restarts ? 'missing' : 'shown on a TV it does not apply to'));
+      }
       if (await page.locator('#disc-system-tiles').isVisible() === c.glasshouse) fail('system apps ' + (c.glasshouse ? 'shown with Glasshouse Home on' : 'missing'));
       if (st.homeAutoLaunch !== undefined && (!await page.locator('#home-autolaunch').isVisible() || await page.locator('#home-autolaunch').isDisabled()))
         fail('Open Home at power-on missing or unusable');
@@ -1229,6 +1276,7 @@ async function visitAudio(browser, base, problems) {
   page.on('pageerror', e => problems.push('Web audio: ' + e.message));
   try {
     const state = await page.request.get(base + '/api/audio?with=settings').then(r => r.json());
+    state.live.hdmi = { channels: 6, channelAllocation: 11, sampleRate: null };
     let failed = false;
     await page.route('**/api/audio*', route => {
       if (failed) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Audio service unavailable' }) });
@@ -1237,6 +1285,8 @@ async function visitAudio(browser, base, problems) {
     await page.goto(base + '/?tab=audio');
     await page.waitForFunction(() => audioState !== null);
     if (!await page.locator('#audio-settings [data-lgs]').count()) problems.push('Audio tab: LG sound settings missing');
+    if (!/HDMI channel information[\s\S]*6 channels/.test(await page.locator('#audio-path').textContent()))
+      problems.push('Web audio: source channel metadata missing');
     failed = true;
     // The readings and their Refresh are folded below the settings.
     await page.locator('#audio-more > summary').click();
@@ -1579,6 +1629,7 @@ async function visitTvAudio(browser, base, problems) {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   page.on('pageerror', e => problems.push('TV audio: ' + e.message));
   const state = await page.request.get(base + '/api/audio?with=settings').then(r => r.json());
+  state.live.hdmi = { channels: 6, channelAllocation: 11, sampleRate: null };
   let failed = false;
   await page.route('**/api/audio*', route => route.fulfill({ status: failed ? 503 : 200, contentType: 'application/json',
     body: JSON.stringify(failed ? { ok: false, error: 'Audio service unavailable' } : state) }));
@@ -1591,6 +1642,8 @@ async function visitTvAudio(browser, base, problems) {
   try {
     await open();
     if (await selected() !== 'Sound output') problems.push('TV audio: did not open on the Sound settings');
+    if (!await page.locator('#rows .row').filter({ hasText: 'HDMI channel information' }).filter({ hasText: '6 channels' }).count())
+      problems.push('TV audio: source channel metadata missing');
     failed = true;
     await open();
     if (await readings().count()) problems.push('TV audio: a failed read left stale readings on screen');
@@ -1706,6 +1759,7 @@ async function visitTvNonOled(browser, base, problems) {
   await visitHomeInputsEditor(browser, base, problems);
   await visitHomeEditor(browser, base, problems);
   await visitHomeOrder(browser, base, problems);
+  await visitHomeRecentsHidden(browser, base, problems);
   await visitHomeUploads(browser, base, problems);
   await visitHomeReadiness(browser, base, problems);
   await visitHomeAvailability(browser, base, problems);
