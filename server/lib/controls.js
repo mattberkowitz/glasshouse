@@ -930,9 +930,16 @@ function doControl(action, value, cb) {
       if (value && typeof value === 'object' && TOAST_TYPES.indexOf(value.type) === -1) {
         return cb({ ok: false, error: 'toast type must be one of ' + TOAST_TYPES.join(', ') });
       }
-      return luna('com.webos.notification/createToast', toastParams(value),
-                  function (r) { cb({ ok: !!(r && r.returnValue), error: r && r.errorText }); },
-                  toastSourceId);
+      var toast = toastParams(value);
+      return luna('com.webos.notification/createToast', toast, function (r) {
+        if (r && r.returnValue) return cb({ ok: true });
+        // webOS 4.4 (a B8) refuses the advanced type, with or without an icon:
+        // "Message is not parsed". The message still goes out, as a plain toast.
+        if (!toast.type) return cb({ ok: false, error: r && r.errorText });
+        console.log('toast: the TV refused a ' + toast.type + ' toast (' + ((r && r.errorText) || 'no answer') + '); sending it as a standard one');
+        luna('com.webos.notification/createToast', { sourceId: toast.sourceId, message: toast.message },
+             function (r2) { cb({ ok: !!(r2 && r2.returnValue), error: r2 && r2.errorText }); }, toastSourceId);
+      }, toastSourceId);
 
     case 'tileHiding':
       if (isFromHbc()) return cb({ ok: false, error: tileHidingOffMsg });

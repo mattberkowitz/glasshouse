@@ -544,6 +544,32 @@ console.log('Running test-controls.js ...');
   console.log('  ✓ a notification takes its type from the topic and its icon from ":icon:"');
 })();
 
+// webOS 4.4 (a B8) refuses the advanced type with "Message is not parsed": the
+// message goes out again as a plain toast, so it is still shown.
+(function testToastFallback() {
+  var calls = [], results = [];
+  controls.init({
+    config: { allowControl: true },
+    luna: function (uri, payload, cb) {
+      calls.push(payload);
+      cb(payload.type ? { returnValue: false, errorText: 'Message is not parsed' } : { returnValue: true });
+    },
+    clearLunaCache: function () {},
+    telemetry: { clearCache: function () {} },
+    toastSource: 'com.webos.app.home'
+  });
+  controls.doControl('toast', { type: 'advanced', text: 'Washer done' }, function (r) { results.push(r); });
+  assert.deepEqual(calls, [
+    { sourceId: 'com.webos.app.home', type: 'advanced', message: 'Washer done' },
+    { sourceId: 'com.webos.app.home', message: 'Washer done' }
+  ], 'sent again as a standard toast, without the icon');
+  assert.strictEqual(results[0].ok, true);
+  calls = [];
+  controls.doControl('toast', 'plain', function (r) { results.push(r); });
+  assert.strictEqual(calls.length, 1, 'a standard toast is not sent twice');
+  console.log('  ✓ a toast type the TV refuses goes out as a standard toast');
+})();
+
 // Remote keys and Home go ahead of the luna queue, and log how long they took
 (function testRcuUrgent() {
   var normal = [];
