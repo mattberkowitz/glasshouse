@@ -283,6 +283,14 @@ action:
 - `advanced`: the same toast, with an icon to the left of the text.
 - `light`: the small toast that slides down at the top right, with a small icon.
 
+webOS 4.4 does not show the `advanced` toast, so there it is shown as `standard`, without the icon.
+
+![A light toast at the top right, with a gear icon](screenshots/notify-light.png)
+
+![An advanced toast at the bottom, with a gear icon](screenshots/notify-advanced.png)
+
+![A standard toast at the bottom, text only](screenshots/notify-standard.png)
+
 Text opening with an icon name between colons, as `:washer: The washing machine is done`, shows that icon; the name and the spaces after it are not shown. The icon is a PNG in `toast-icons/` in the server's folder on the TV, so `washer` is `/var/lib/tvweb/toast-icons/washer.png`. An `@` and an absolute path, as `:@/usr/palm/notificationmgr/images/alert-notification-icon.png:`, uses any image on the TV, such as LG's own. A white glyph of 72 px on a transparent background suits both sizes.
 
 ```yaml

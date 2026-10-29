@@ -853,6 +853,10 @@ black, with a 36 icon, between 150 and 450 wide. The icon is `iconUrl`, a local 
 Sizes are at 1080p (`NotificationStyle.qml`). A toast stays about 5 seconds
 whatever is asked.
 
+On a B8 (webOS 4.4.3), `createToast` refuses `type: advanced` with "Message
+is not parsed", with or without `iconUrl`; `light` and `standard` work, `light`
+with its icon. A C2 (webOS 9.2.2) shows all three.
+
 ## Switching off (C5, webOS 10.3.1)
 
 `power/powerOff` with reason `remoteKey` switched the TV off, going Active,
